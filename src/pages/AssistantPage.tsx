@@ -7,6 +7,7 @@ import { ASSISTANT_SUGGESTIONS } from '@/data/mockData';
 import VoiceButton from '@/components/VoiceButton';
 import type { VoiceState } from '@/types';
 import { formatTime } from '@/utils';
+import { speechService } from '@/services/speech';
 
 export default function AssistantPage() {
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
@@ -43,17 +44,39 @@ export default function AssistantPage() {
     }
   };
 
-  const handleVoiceMock = () => {
+  const handleVoiceClick = () => {
+    if (voiceState === 'listening') {
+      speechService.stop();
+      setVoiceState('idle');
+      return;
+    }
     if (voiceState !== 'idle') return;
-    setVoiceState('listening');
-    setTimeout(() => {
-      setVoiceState('processing');
+
+    if (!speechService.isSupported()) {
+      // Fallback for non-supporting browsers
+      setVoiceState('listening');
       setTimeout(() => {
         setVoiceState('idle');
-        send('What is running low?');
-      }, 800);
-    }, 2000);
+        void send('What is running low?');
+      }, 2000);
+      return;
+    }
+
+    setVoiceState('listening');
+    speechService.start(
+      'en-IN',
+      (result) => {
+        if (result.isFinal) {
+          setVoiceState('processing');
+          void send(result.transcript).then(() => setVoiceState('idle'));
+        }
+      },
+      () => setVoiceState('idle'),
+      undefined,
+      () => setVoiceState('idle'),
+    );
   };
+
 
   return (
     <div className="min-h-screen bg-[--color-bg] flex flex-col">
@@ -156,7 +179,7 @@ export default function AssistantPage() {
       {/* Input Bar */}
       <div className="fixed bottom-16 left-0 right-0 bg-white border-t border-[--color-border] px-4 py-3 lg:static lg:border-t lg:bottom-auto">
         <div className="flex items-center gap-2 max-w-2xl mx-auto">
-          <VoiceButton state={voiceState} onClick={handleVoiceMock} size="md" />
+          <VoiceButton state={voiceState} onClick={handleVoiceClick} size="md" />
           <input
             ref={inputRef}
             type="text"

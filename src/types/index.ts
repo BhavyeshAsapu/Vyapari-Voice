@@ -104,6 +104,86 @@ export interface VoiceTranscriptResult {
   confidence: number;
 }
 
+// ── Real voice pipeline types (Milestone 2) ────────────────────────────────────
+
+export type IntentType =
+  | 'STOCK_IN'
+  | 'STOCK_OUT'
+  | 'CREATE_PRODUCT'
+  | 'CHECK_STOCK'
+  | 'LOW_STOCK_QUERY'
+  | 'OUT_OF_STOCK_QUERY'
+  | 'REORDER_QUERY'
+  | 'TRANSACTION_HISTORY_QUERY'
+  | 'FAST_SELLING_QUERY'
+  | 'UNDO_LAST_TRANSACTION'
+  | 'UNKNOWN';
+
+export type ProductMatchStatus = 'MATCHED' | 'AMBIGUOUS' | 'NOT_FOUND';
+
+export interface InventoryIntent {
+  intent: IntentType;
+  language: string;
+  productName: string | null;
+  brand: string | null;
+  category: string | null;
+  quantity: number | null;
+  unit: string | null;
+  price: number | null;
+  priceType: 'PER_UNIT' | 'TOTAL' | 'UNKNOWN' | null;
+  transactionType: 'STOCK_IN' | 'STOCK_OUT' | null;
+  possibleAliases: string[];
+  confidence: number;
+  needsClarification: boolean;
+  clarificationQuestion: string | null;
+}
+
+export interface ProductMatch {
+  status: ProductMatchStatus;
+  productId?: string;
+  name?: string;
+  brand?: string;
+  unit?: string;
+  currentStock?: number;
+  candidates?: Array<{
+    id: string;
+    name: string;
+    brand?: string;
+    category?: string;
+    unit?: string;
+    currentStock?: number;
+  }>;
+}
+
+export interface ProposedAction {
+  type: 'STOCK_IN' | 'STOCK_OUT' | 'CREATE_PRODUCT' | 'QUERY' | 'CLARIFICATION' | 'UNDO';
+  productId?: string;
+  productName?: string;
+  currentQuantity?: number;
+  change?: number;
+  resultQuantity?: number;
+  unit?: string;
+  price?: number;
+  proposedProduct?: Record<string, unknown>;
+}
+
+export interface VoiceParseResponse {
+  transcript: string;
+  interpretation: InventoryIntent;
+  productMatch: ProductMatch;
+  proposedAction: ProposedAction;
+  requiresConfirmation: boolean;
+  queryAnswer?: string;
+}
+
+export interface VoiceConfirmResponse {
+  success: boolean;
+  message: string;
+  transactionId?: string;
+  productId?: string;
+  newStock?: number;
+}
+
 // Summary Types
 
 export interface DailySummary {
