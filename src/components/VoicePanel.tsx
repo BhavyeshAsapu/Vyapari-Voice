@@ -19,19 +19,23 @@ export default function VoicePanel({ onStockUpdated, compact = false }: VoicePan
   const [errorMessage, setErrorMessage] = useState('');
   const [successInfo, setSuccessInfo] = useState<{ name: string; qty: number; unit: string; type: string } | null>(null);
 
+  const runProcessing = useCallback(async () => {
+    setVoiceState('processing');
+    try {
+      const result = await parseVoiceCommand();
+      setTranscript(result);
+      setVoiceState('transcript');
+      setTimeout(() => setVoiceState('confirmation'), 1200);
+    } catch {
+      setVoiceState('error');
+      setErrorMessage('Could not understand. Please try again.');
+    }
+  }, []);
+
   const handleMicClick = useCallback(async () => {
     if (voiceState === 'listening') {
-      // Simulate end of speech → processing
-      setVoiceState('processing');
-      try {
-        const result = await parseVoiceCommand();
-        setTranscript(result);
-        setVoiceState('transcript');
-        setTimeout(() => setVoiceState('confirmation'), 1200);
-      } catch {
-        setVoiceState('error');
-        setErrorMessage('Could not understand. Please try again.');
-      }
+      // User manually stopped — process immediately
+      void runProcessing();
       return;
     }
 
@@ -42,21 +46,15 @@ export default function VoicePanel({ onStockUpdated, compact = false }: VoicePan
       setSuccessInfo(null);
 
       // Auto-stop after 3 seconds for demo
-      setTimeout(async () => {
-        if (voiceState !== 'listening') return;
-        setVoiceState('processing');
-        try {
-          const result = await parseVoiceCommand();
-          setTranscript(result);
-          setVoiceState('transcript');
-          setTimeout(() => setVoiceState('confirmation'), 1200);
-        } catch {
-          setVoiceState('error');
-          setErrorMessage('Could not understand. Please try again.');
-        }
+      setTimeout(() => {
+        setVoiceState((current) => {
+          if (current !== 'listening') return current;
+          void runProcessing();
+          return 'processing';
+        });
       }, 3000);
     }
-  }, [voiceState]);
+  }, [voiceState, runProcessing]);
 
   const handleConfirm = async () => {
     if (!transcript) return;
