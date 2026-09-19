@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Store, Globe, Mic, Ruler, Bell, HelpCircle,
-  ChevronRight, User, Shield, FileText, Star, LogOut
+  ChevronRight, User, Shield, FileText, Star, X, Save, CheckCircle2
 } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
-import { DEFAULT_SETTINGS } from '@/data/mockData';
+import { useSettings } from '@/hooks/useSettings';
+import { getProfile, updateProfile } from '@/services/api';
 
 interface SettingItemProps {
   icon: React.ElementType;
@@ -50,14 +51,80 @@ function SettingItem({
   );
 }
 
-type SheetKey = 'language' | 'voice' | 'units' | 'notifications' | null;
+type SheetKey = 'language' | 'voice' | 'units' | 'notifications' | 'editProfile' | null;
 
 export default function MorePage() {
+  const { settings, updateSettings } = useSettings();
   const [openSheet, setOpenSheet] = useState<SheetKey>(null);
-  const [lang, setLang] = useState(DEFAULT_SETTINGS.language);
-  const [notif, setNotif] = useState(DEFAULT_SETTINGS.notificationsEnabled);
+  const [notif, setNotif] = useState(settings.notificationsEnabled);
+
+  // Profile edit state
+  const [profileForm, setProfileForm] = useState({
+    ownerName: settings.ownerName || '',
+    shopName: settings.shopName || '',
+    phone: '',
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState('');
+
+  // Load persisted profile from backend on mount
+  useEffect(() => {
+    getProfile().then((p) => {
+      setProfileForm({
+        ownerName: p.ownerName || settings.ownerName || '',
+        shopName: p.shopName || settings.shopName || '',
+        phone: p.phone || '',
+      });
+      // Sync language from backend if available
+      if (p.language && p.language !== settings.language) {
+        updateSettings({ language: p.language as 'en' | 'te' | 'hi' });
+      }
+    }).catch(() => {
+      // If backend not reachable, use local settings
+    });
+  }, []);
 
   const sheet = (key: SheetKey) => () => setOpenSheet(key);
+
+  const handleLanguageSelect = (code: 'en' | 'te' | 'hi') => {
+    updateSettings({ language: code });
+    // Also persist language to backend profile
+    updateProfile({ language: code }).catch(() => {});
+    setOpenSheet(null);
+  };
+
+  const handleProfileSave = async () => {
+    if (!profileForm.ownerName.trim() || !profileForm.shopName.trim()) {
+      setProfileError('Owner name and shop name are required.');
+      return;
+    }
+    setProfileSaving(true);
+    setProfileError('');
+    try {
+      await updateProfile({
+        ownerName: profileForm.ownerName.trim(),
+        shopName: profileForm.shopName.trim(),
+        phone: profileForm.phone.trim(),
+      });
+      // Sync to localStorage settings too
+      updateSettings({
+        ownerName: profileForm.ownerName.trim(),
+        shopName: profileForm.shopName.trim(),
+      });
+      setProfileSaved(true);
+      setTimeout(() => {
+        setProfileSaved(false);
+        setOpenSheet(null);
+      }, 1200);
+    } catch {
+      setProfileError('Failed to save. Please try again.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const langLabel = settings.language === 'te' ? 'తెలుగు' : settings.language === 'hi' ? 'हिन्दी' : 'English';
 
   return (
     <div className="min-h-screen bg-[--color-bg]">
@@ -74,11 +141,15 @@ export default function MorePage() {
             <User size={28} className="text-orange-500" />
           </div>
           <div className="flex-1">
-            <p className="font-bold text-lg text-[--color-text]">{DEFAULT_SETTINGS.ownerName}</p>
-            <p className="text-sm text-[--color-text-secondary]">{DEFAULT_SETTINGS.shopName}</p>
+            <p className="font-bold text-lg text-[--color-text]">{profileForm.ownerName || settings.ownerName || 'Owner'}</p>
+            <p className="text-sm text-[--color-text-secondary]">{profileForm.shopName || settings.shopName || 'My Shop'}</p>
             <p className="text-xs text-orange-500 font-medium mt-0.5">Owner</p>
           </div>
-          <button className="btn btn-secondary btn-sm" aria-label="Edit profile">
+          <button
+            className="btn btn-secondary btn-sm"
+            aria-label="Edit profile"
+            onClick={sheet('editProfile')}
+          >
             Edit
           </button>
         </motion.div>
@@ -99,15 +170,15 @@ export default function MorePage() {
               iconBg="bg-orange-50"
               iconColor="text-orange-500"
               title="Shop Profile"
-              subtitle={DEFAULT_SETTINGS.shopName}
-              onClick={sheet(null)}
+              subtitle={profileForm.shopName || settings.shopName}
+              onClick={sheet('editProfile')}
             />
             <SettingItem
               icon={Globe}
               iconBg="bg-blue-50"
               iconColor="text-blue-500"
               title="Language"
-              subtitle={lang === 'en' ? 'English' : lang === 'te' ? 'తెలుగు' : 'हिन्दी'}
+              subtitle={langLabel}
               onClick={sheet('language')}
             />
             <SettingItem
@@ -115,7 +186,7 @@ export default function MorePage() {
               iconBg="bg-purple-50"
               iconColor="text-purple-500"
               title="Units"
-              subtitle={`Default: ${DEFAULT_SETTINGS.defaultUnit}`}
+              subtitle={`Default: ${settings.defaultUnit}`}
               onClick={sheet('units')}
             />
           </div>
@@ -128,7 +199,7 @@ export default function MorePage() {
           className="card p-4"
         >
           <h2 className="text-xs font-semibold text-[--color-text-secondary] uppercase tracking-wider mb-2">
-            Voice & Notifications
+            Voice &amp; Notifications
           </h2>
           <div className="divide-y divide-[--color-border]">
             <SettingItem
@@ -180,7 +251,7 @@ export default function MorePage() {
               icon={HelpCircle}
               iconBg="bg-gray-50"
               iconColor="text-gray-500"
-              title="Help & FAQ"
+              title="Help &amp; FAQ"
               subtitle="Common questions"
             />
             <SettingItem
@@ -209,11 +280,11 @@ export default function MorePage() {
         {/* App info */}
         <div className="text-center py-4 space-y-1">
           <p className="text-sm font-semibold text-[--color-text]">Vyapari Voice</p>
-          <p className="text-xs text-[--color-text-secondary]">Version 1.0 — Milestone 1</p>
+          <p className="text-xs text-[--color-text-secondary]">Version 2.0 — Milestone 2</p>
           <p className="text-xs text-[--color-text-secondary]">"Speak Naturally. Manage Your Shop Easily."</p>
         </div>
 
-        {/* Language Sheet (mock modal) */}
+        {/* Language Sheet */}
         {openSheet === 'language' && (
           <div className="fixed inset-0 z-50 flex items-end">
             <div className="absolute inset-0 bg-black/30" onClick={() => setOpenSheet(null)} />
@@ -225,27 +296,106 @@ export default function MorePage() {
             >
               <h2 className="font-bold text-xl text-[--color-text]">Choose Language</h2>
               {[
-                { code: 'en', label: 'English', native: 'English' },
-                { code: 'te', label: 'Telugu', native: 'తెలుగు' },
-                { code: 'hi', label: 'Hindi', native: 'हिन्दी' },
+                { code: 'en' as const, label: 'English', native: 'English' },
+                { code: 'te' as const, label: 'Telugu', native: 'తెలుగు' },
+                { code: 'hi' as const, label: 'Hindi', native: 'हिन्दी' },
               ].map((l) => (
                 <button
                   key={l.code}
-                  onClick={() => { setLang(l.code as typeof lang); setOpenSheet(null); }}
+                  onClick={() => handleLanguageSelect(l.code)}
                   className={`w-full flex items-center justify-between p-4 rounded-xl border-2 ${
-                    lang === l.code ? 'border-orange-500 bg-orange-50' : 'border-[--color-border] bg-white'
+                    settings.language === l.code ? 'border-orange-500 bg-orange-50' : 'border-[--color-border] bg-white'
                   }`}
                 >
                   <div>
                     <p className="font-semibold">{l.native}</p>
                     <p className="text-sm text-[--color-text-secondary]">{l.label}</p>
                   </div>
-                  {lang === l.code && <span className="text-orange-500">✓</span>}
+                  {settings.language === l.code && <span className="text-orange-500">✓</span>}
                 </button>
               ))}
               <button onClick={() => setOpenSheet(null)} className="btn btn-secondary w-full">
                 Close
               </button>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Edit Profile Sheet */}
+        {openSheet === 'editProfile' && (
+          <div className="fixed inset-0 z-50 flex items-end">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setOpenSheet(null)} />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full bg-white rounded-t-2xl p-6 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="font-bold text-xl text-[--color-text]">Edit Profile</h2>
+                <button onClick={() => setOpenSheet(null)} className="btn btn-ghost p-2" aria-label="Close">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {profileSaved ? (
+                <div className="flex flex-col items-center py-6 gap-3 text-green-600">
+                  <CheckCircle2 size={36} />
+                  <p className="font-bold text-lg">Profile saved!</p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label htmlFor="profile-owner" className="label">Owner Name *</label>
+                    <input
+                      id="profile-owner"
+                      type="text"
+                      className="input"
+                      placeholder="Your name"
+                      value={profileForm.ownerName}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, ownerName: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="profile-shop" className="label">Shop Name *</label>
+                    <input
+                      id="profile-shop"
+                      type="text"
+                      className="input"
+                      placeholder="e.g. Sri Lakshmi Stores"
+                      value={profileForm.shopName}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, shopName: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="profile-phone" className="label">Phone Number (Optional)</label>
+                    <input
+                      id="profile-phone"
+                      type="tel"
+                      className="input"
+                      placeholder="+91 99999 99999"
+                      value={profileForm.phone}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, phone: e.target.value }))}
+                    />
+                  </div>
+                  {profileError && <p className="text-xs text-red-500">{profileError}</p>}
+                  <button
+                    onClick={handleProfileSave}
+                    disabled={profileSaving}
+                    className="btn btn-primary w-full disabled:opacity-40"
+                    id="save-profile-btn"
+                  >
+                    {profileSaving ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <><Save size={16} /> Save Profile</>
+                    )}
+                  </button>
+                </>
+              )}
             </motion.div>
           </div>
         )}

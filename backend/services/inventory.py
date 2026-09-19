@@ -9,11 +9,12 @@ Business rules enforced here (not in the AI layer):
 """
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as date_type
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from models.transaction import TransactionCreate, TransactionResponse, doc_to_transaction
 from models.product import ProductResponse, doc_to_product
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,8 @@ class InventoryService:
     # ── Products ──────────────────────────────────────────────────────────────
 
     async def get_all_products(self) -> list[ProductResponse]:
-        cursor = self._db.products.find({}).sort("name", 1)
+        # Exclude archived products from active inventory
+        cursor = self._db.products.find({"status": {"$ne": "archived"}}).sort("name", 1)
         docs = await cursor.to_list(length=None)
         return [doc_to_product(d) for d in docs]
 
@@ -61,6 +63,62 @@ class InventoryService:
         await self._db.products.update_one({"_id": product_id}, {"$set": updates})
         doc = await self._db.products.find_one({"_id": product_id})
         return doc_to_product(doc) if doc else None
+
+    async def archive_product(self, product_id: str) -> Optional[ProductResponse]:
+        """Soft-delete: marks product as archived without destroying transaction history."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.products.update_one(
+            {"_id": product_id},
+            {"$set": {"status": "archived", "updatedAt": now}},
+        )
+        doc = await self._db.products.find_one({"_id": product_id})
+        return doc_to_product(doc) if doc else None
+
+    async def add_stock(
+        self,
+        product_id: str,
+        quantity: float,
+        unit: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> "TransactionResponse":
+        """Add stock via a STOCK_IN transaction. One action = one transaction."""
+        product = await self.get_product(product_id)
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+        return await self.create_transaction(TransactionCreate(
+            productId=product.id,
+            productName=product.name,
+            quantity=quantity,
+            unit=unit or product.unit,
+            type="stock_in",
+            source="manual",
+            note=note,
+        ))
+
+    async def remove_stock(
+        self,
+        product_id: str,
+        quantity: float,
+        unit: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> "TransactionResponse":
+        """Remove stock via a STOCK_OUT transaction. Raises InsufficientStockError if not enough."""
+        product = await self.get_product(product_id)
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+        if quantity > product.currentStock:
+            raise InsufficientStockError(
+                product.name, product.currentStock, quantity, product.unit
+            )
+        return await self.create_transaction(TransactionCreate(
+            productId=product.id,
+            productName=product.name,
+            quantity=quantity,
+            unit=unit or product.unit,
+            type="stock_out",
+            source="manual",
+            note=note,
+        ))
 
     # ── Transactions ──────────────────────────────────────────────────────────
 
@@ -179,8 +237,10 @@ class InventoryService:
 
     async def get_alerts(self) -> list[dict]:
         products = await self.get_all_products()
+        today = date_type.today()
         alerts = []
         for p in products:
+            # ── Stock alerts ──────────────────────────────────────────────────
             if p.currentStock == 0:
                 alerts.append({
                     "id": f"alert_{p.id}_oos",
@@ -217,9 +277,158 @@ class InventoryService:
                     "capacity": p.capacity,
                     "unit": p.unit,
                 })
+
+            # ── Expiry alerts ─────────────────────────────────────────────────
+            if p.expiryDate:
+                try:
+                    expiry = date_type.fromisoformat(p.expiryDate)
+                    days_until = (expiry - today).days
+                    if days_until < 0:
+                        alerts.append({
+                            "id": f"alert_{p.id}_expired",
+                            "productId": p.id,
+                            "productName": p.name,
+                            "type": "expired",
+                            "severity": "critical",
+                            "message": f"{p.name} expired on {p.expiryDate}.",
+                            "currentStock": p.currentStock,
+                            "unit": p.unit,
+                            "expiryDate": p.expiryDate,
+                            "daysUntilExpiry": days_until,
+                        })
+                    elif days_until <= settings.expiry_soon_days:
+                        alerts.append({
+                            "id": f"alert_{p.id}_expiring",
+                            "productId": p.id,
+                            "productName": p.name,
+                            "type": "expiring_soon",
+                            "severity": "warning",
+                            "message": f"{p.name} expires in {days_until} day(s) on {p.expiryDate}.",
+                            "currentStock": p.currentStock,
+                            "unit": p.unit,
+                            "expiryDate": p.expiryDate,
+                            "daysUntilExpiry": days_until,
+                        })
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid expiryDate for product {p.id}: {p.expiryDate}")
+
         return alerts
 
+    async def get_expiry_alerts(self) -> list[dict]:
+        """Returns only expiry-related alerts (expired + expiring_soon)."""
+        all_alerts = await self.get_alerts()
+        return [a for a in all_alerts if a["type"] in ("expired", "expiring_soon")]
+
+
     # ── Dashboard ─────────────────────────────────────────────────────────────
+
+    async def get_daily_inventory_summary(self, date_str: Optional[str] = None) -> dict:
+        """
+        Returns a per-product daily inventory breakdown for a given date.
+
+        Opening stock = product's openingStock + all transactions BEFORE the day's start.
+        This is a ledger replay — MongoDB transactions are the source of truth.
+        AI never calculates these numbers.
+
+        Args:
+            date_str: ISO date string "YYYY-MM-DD". Defaults to today in IST (UTC+5:30).
+        """
+        # Default to today in IST
+        if not date_str:
+            from zoneinfo import ZoneInfo
+            ist = ZoneInfo("Asia/Kolkata")
+            date_str = datetime.now(ist).date().isoformat()
+
+        # Day boundaries in UTC (transactions stored in UTC)
+        try:
+            target_date = date_type.fromisoformat(date_str)
+        except ValueError:
+            target_date = date_type.today()
+
+        day_start = datetime(
+            target_date.year, target_date.month, target_date.day,
+            0, 0, 0, tzinfo=timezone.utc
+        )
+        day_end = datetime(
+            target_date.year, target_date.month, target_date.day,
+            23, 59, 59, 999999, tzinfo=timezone.utc
+        )
+        day_start_iso = day_start.isoformat()
+        day_end_iso = day_end.isoformat()
+
+        # Get all active products
+        products = await self.get_all_products()
+
+        # Fetch ALL transactions before end of day for opening + intraday calculations
+        all_txs_before_end = await self._db.transactions.find(
+            {"timestamp": {"$lte": day_end_iso}}
+        ).sort("timestamp", 1).to_list(length=None)
+
+        product_results = []
+        stock_in_count = 0
+        stock_out_count = 0
+
+        for product in products:
+            pid = product.id
+            # Opening stock = product.openingStock + all transactions BEFORE day start
+            opening = product.openingStock
+            for tx in all_txs_before_end:
+                if tx["productId"] != pid:
+                    continue
+                if tx["timestamp"] >= day_start_iso:
+                    break  # We've hit the day boundary (sorted ASC)
+                if tx["type"] == "stock_in":
+                    opening += tx["quantity"]
+                elif tx["type"] == "stock_out":
+                    opening -= tx["quantity"]
+
+            # Intraday transactions
+            stock_in = 0.0
+            stock_out = 0.0
+            had_activity = False
+            for tx in all_txs_before_end:
+                if tx["productId"] != pid:
+                    continue
+                if tx["timestamp"] < day_start_iso:
+                    continue
+                had_activity = True
+                if tx["type"] == "stock_in":
+                    stock_in += tx["quantity"]
+                    stock_in_count += 1
+                elif tx["type"] == "stock_out":
+                    stock_out += tx["quantity"]
+                    stock_out_count += 1
+
+            closing = opening + stock_in - stock_out
+
+            # Only include products that had activity OR are important (low/out of stock)
+            if had_activity or product.currentStock <= product.reorderLevel:
+                product_results.append({
+                    "productId": pid,
+                    "productName": product.name,
+                    "unit": product.unit,
+                    "openingStock": round(opening, 2),
+                    "stockIn": round(stock_in, 2),
+                    "stockOut": round(stock_out, 2),
+                    "closingStock": round(closing, 2),
+                    "hadActivity": had_activity,
+                })
+
+        # Sort: products with activity first, then by name
+        product_results.sort(key=lambda x: (0 if x["hadActivity"] else 1, x["productName"]))
+
+        return {
+            "date": date_str,
+            "products": product_results,
+            "totals": {
+                "stockInTransactions": stock_in_count,
+                "stockOutTransactions": stock_out_count,
+                "netChange": round(
+                    sum(r["stockIn"] - r["stockOut"] for r in product_results), 2
+                ),
+                "productsWithActivity": sum(1 for r in product_results if r["hadActivity"]),
+            },
+        }
 
     async def get_daily_summary(self) -> dict:
         today_txs = await self.get_today_transactions()

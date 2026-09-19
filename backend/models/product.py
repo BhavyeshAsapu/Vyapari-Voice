@@ -23,6 +23,9 @@ class ProductBase(BaseModel):
     purchasePrice: float = 0
     sellingPrice: float = 0
     aliases: list[str] = Field(default_factory=list)
+    # Expiry tracking — optional for all products
+    expiryDate: Optional[str] = None     # ISO date string "YYYY-MM-DD"
+    expiryTracked: bool = False           # True when user opted in to expiry tracking
 
 
 class ProductCreate(ProductBase):
@@ -44,6 +47,9 @@ class ProductUpdate(BaseModel):
     purchasePrice: Optional[float] = None
     sellingPrice: Optional[float] = None
     aliases: Optional[list[str]] = None
+    # Expiry updates
+    expiryDate: Optional[str] = None
+    expiryTracked: Optional[bool] = None
 
 
 class ProductInDB(ProductBase):
@@ -71,6 +77,9 @@ class ProductResponse(BaseModel):
     aliases: list[str] = []
     createdAt: str
     updatedAt: str
+    # Expiry fields — None for products without tracking
+    expiryDate: Optional[str] = None
+    expiryTracked: bool = False
 
 
 def doc_to_product(doc: dict) -> ProductResponse:
@@ -89,4 +98,6 @@ def doc_to_product(doc: dict) -> ProductResponse:
         aliases=doc.get("aliases", []),
         createdAt=doc.get("createdAt", ""),
         updatedAt=doc.get("updatedAt", ""),
+        expiryDate=doc.get("expiryDate"),
+        expiryTracked=doc.get("expiryTracked", False),
     )

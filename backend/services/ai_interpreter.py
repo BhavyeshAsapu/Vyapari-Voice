@@ -17,25 +17,18 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini once at import time
-if settings.gemini_api_key:
-    genai.configure(api_key=settings.gemini_api_key)
-else:
-    logger.warning("⚠️  GEMINI_API_KEY not set. AI features will not work until it is configured in backend/.env")
-
-# Use flash for speed; switch to pro for higher accuracy if needed
-_MODEL_NAME = "gemini-1.5-flash"
-
-_SYSTEM_PROMPT = """
+_SYSTEM_PROMPT_TEMPLATE = """
 You are an AI inventory assistant for an Indian kirana (general store) shop management app called Vyapari Voice.
 
 Your job is to interpret the shop owner's natural speech — which may be in English, Telugu, Hindi, or any mix of these — and extract structured inventory intent.
 
 You MUST respond with a valid JSON object matching the schema below. Do NOT add prose, markdown, or explanation. Output ONLY the JSON.
 
+Today's date: {today}
+
 JSON Schema:
-{
-  "intent": "<one of: STOCK_IN | STOCK_OUT | CREATE_PRODUCT | CHECK_STOCK | LOW_STOCK_QUERY | OUT_OF_STOCK_QUERY | REORDER_QUERY | TRANSACTION_HISTORY_QUERY | FAST_SELLING_QUERY | UNDO_LAST_TRANSACTION | UNKNOWN>",
+{{
+  "intent": "<one of: STOCK_IN | STOCK_OUT | CREATE_PRODUCT | CHECK_STOCK | LOW_STOCK_QUERY | OUT_OF_STOCK_QUERY | REORDER_QUERY | TRANSACTION_HISTORY_QUERY | FAST_SELLING_QUERY | UNDO_LAST_TRANSACTION | DAILY_SUMMARY_QUERY | EXPIRY_QUERY | EXPIRING_SOON_QUERY | EXPIRED_QUERY | UNKNOWN>",
   "language": "<e.g. english | telugu | hindi | mixed_telugu_english | mixed_hindi_english>",
   "productName": "<product name in English, or null>",
   "brand": "<brand name if clearly stated, or null>",
@@ -48,8 +41,9 @@ JSON Schema:
   "possibleAliases": ["<alias1>", "<alias2>"],
   "confidence": <0.0 to 1.0>,
   "needsClarification": <true | false>,
-  "clarificationQuestion": "<question to ask user, or null>"
-}
+  "clarificationQuestion": "<question to ask user, or null>",
+  "expiryDate": "<ISO date YYYY-MM-DD if expiry mentioned, or null>"
+}}
 
 Rules:
 1. "vachayi", "vachindi", "aaya", "aaye", "received", "came", "add" → STOCK_IN
@@ -61,12 +55,24 @@ Rules:
 7. "fast selling", "what is selling" → FAST_SELLING_QUERY
 8. "undo", "cancel last" → UNDO_LAST_TRANSACTION
 9. "Biyyam" = Rice (Telugu). "Cheeni" = Sugar. "Uppu" = Salt. "Nune" = Oil. "Kandi Pappu" = Toor Dal.
-10. If quantity is missing for STOCK_IN/STOCK_OUT, set needsClarification=true and clarificationQuestion="How many <unit> of <product>?"
-11. If unit is ambiguous (e.g. just a number), set needsClarification=true.
-12. If product is completely unclear, set intent=UNKNOWN and needsClarification=true.
-13. For price: if a number clearly follows "rupees", "rs", "₹", "per kg", extract it. If ambiguous, set needsClarification=true.
-14. Do NOT invent product names. Use what the user said or a reasonable English translation.
-15. confidence should reflect how certain you are (0.0 = wild guess, 1.0 = crystal clear).
+10. DAILY_SUMMARY_QUERY → "stock summary", "ivala stock", "aaj ka summary", "what happened to stock today", "stock movement", "Naaku ivala stock summary cheppu", "aaj ka stock batao"
+11. EXPIRY_QUERY → "expiry", "expire", "expiry items", "naaku expiry items cheppu", "kaunsa expire ho raha hai"
+12. EXPIRING_SOON_QUERY → "expiring soon", "what is expiring", "expiry today", "which products expire soon"
+13. EXPIRED_QUERY → "expired", "expired items", "which products expired", "what expired"
+14. Expiry date extraction rules:
+    - "expires tomorrow" → tomorrow's date from today: {today}
+    - "expires today" → today's date: {today}
+    - "expires day after tomorrow" → {day_after_tomorrow}
+    - "expiry 21 September" or "expiry September 21" → convert to ISO using current year if unambiguous
+    - "expires next week" → 7 days from today
+    - "expired yesterday" → yesterday's date
+    - ONLY extract expiryDate if the user clearly stated an expiry date or relative time
+    - If expiry date is ambiguous, set needsClarification=true and clarificationQuestion="When does it expire?"
+    - NEVER guess or invent an expiry date
+15. If quantity is missing for STOCK_IN/STOCK_OUT, set needsClarification=true
+16. If unit is ambiguous, set needsClarification=true
+17. If product is completely unclear, set intent=UNKNOWN and needsClarification=true
+18. confidence should reflect how certain you are (0.0 = wild guess, 1.0 = crystal clear)
 """
 
 
@@ -74,10 +80,36 @@ class AIInventoryInterpreter:
     """Interprets free-form inventory speech into structured InventoryIntent."""
 
     def __init__(self):
+        if not settings.gemini_api_key:
+            logger.warning("⚠️  GEMINI_API_KEY not set. AI features will not work until it is configured in backend/.env")
+            self._model = None
+            return
+
+        # Configure Gemini with the sanitized key from settings
+        genai.configure(api_key=settings.gemini_api_key)
         self._model = genai.GenerativeModel(
-            model_name=_MODEL_NAME,
-            system_instruction=_SYSTEM_PROMPT,
+            model_name=settings.gemini_model,
         )
+        logger.info(f"✅ AIInventoryInterpreter initialized with model: {settings.gemini_model}")
+
+    def _build_system_prompt(self) -> str:
+        """Inject today's date into system prompt so relative dates resolve correctly."""
+        from datetime import date, timedelta
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        day_after = today + timedelta(days=2)
+        return _SYSTEM_PROMPT_TEMPLATE.format(
+            today=today.isoformat(),
+            day_after_tomorrow=day_after.isoformat(),
+        )
+
+
+    def _require_model(self):
+        if self._model is None:
+            raise RuntimeError(
+                "AI service unavailable: GEMINI_API_KEY is not configured. "
+                "Set it in backend/.env and restart the server."
+            )
 
     async def interpret_command(
         self,
@@ -100,6 +132,8 @@ class AIInventoryInterpreter:
             ValueError: If AI response fails Pydantic validation
             RuntimeError: If AI call fails entirely
         """
+        self._require_model()
+
         prompt_parts = [f'Transcript: "{transcript}"']
 
         if language_hint:
@@ -115,17 +149,23 @@ class AIInventoryInterpreter:
 
         try:
             response = await self._model.generate_content_async(
-                prompt,
+                [{"role": "user", "parts": [prompt]}],
                 generation_config=genai.GenerationConfig(
                     response_mime_type="application/json",
-                    temperature=0.1,  # Low temperature for consistency
+                    temperature=0.1,
                     max_output_tokens=512,
                 ),
+                system_instruction=self._build_system_prompt(),
             )
             raw_text = response.text.strip()
             logger.debug(f"AI raw output: {raw_text}")
         except Exception as e:
+            err_str = str(e)
             logger.error(f"Gemini API call failed: {e}")
+            if "API_KEY_INVALID" in err_str or "invalid" in err_str.lower():
+                raise RuntimeError(
+                    "AI_AUTHENTICATION_FAILED: API key not valid. Check GEMINI_API_KEY in backend/.env."
+                ) from e
             raise RuntimeError(f"AI service unavailable: {e}") from e
 
         # Parse and validate with Pydantic
@@ -154,6 +194,8 @@ class AIInventoryInterpreter:
         The AI formats the response; it does NOT invent numbers or products.
         All values come from `data` — the backend result.
         """
+        self._require_model()
+
         prompt = f"""
 You are a friendly inventory assistant for an Indian kirana shop.
 Generate a SHORT, natural response (1-3 sentences max) to the following query result.

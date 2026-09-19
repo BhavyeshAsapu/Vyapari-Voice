@@ -1,12 +1,27 @@
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Bell } from 'lucide-react';
-import { getAlerts } from '@/services/api';
+import { getAlerts, dismissAlert } from '@/services/api';
 import type { Alert, AlertType } from '@/types';
 import AlertCard from '@/components/AlertCard';
 import EmptyState from '@/components/EmptyState';
 import LoadingState from '@/components/LoadingState';
 import PageHeader from '@/components/PageHeader';
+
+const DISMISSED_KEY = 'vyapari_dismissed_alerts';
+
+function loadDismissed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDismissed(ids: Set<string>) {
+  localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids]));
+}
 
 type SectionKey = 'critical' | AlertType;
 
@@ -17,15 +32,33 @@ const SECTIONS: { key: SectionKey; label: string; emoji: string }[] = [
 ];
 
 export default function AlertsPage() {
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [allAlerts, setAllAlerts] = useState<Alert[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(loadDismissed);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     getAlerts().then((a) => {
-      setAlerts(a);
+      setAllAlerts(a);
       setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   }, []);
+
+  const handleDismiss = (alertId: string) => {
+    // Optimistic UI: remove from view immediately
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.add(alertId);
+      saveDismissed(next);
+      return next;
+    });
+    // Persist dismissal to backend (fire-and-forget, inventory not touched)
+    dismissAlert(alertId).catch(() => {
+      // If backend fails, the localStorage entry still suppresses the alert locally
+    });
+  };
+
+  // Filter out dismissed alerts — NEVER alters inventory
+  const alerts = allAlerts.filter((a) => !dismissedIds.has(a.id));
 
   const critical = alerts.filter((a) => a.severity === 'critical');
   const lowStock = alerts.filter((a) => a.type === 'low_stock');
@@ -50,10 +83,11 @@ export default function AlertsPage() {
             icon={<Bell size={28} className="text-green-500" />}
           />
         ) : (
-          <>
+          <AnimatePresence mode="popLayout">
             {/* Critical */}
             {critical.length > 0 && (
               <motion.section
+                key="critical"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 aria-label="Critical alerts"
@@ -66,9 +100,11 @@ export default function AlertsPage() {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {critical.map((a) => (
-                    <AlertCard key={a.id} alert={a} />
-                  ))}
+                  <AnimatePresence mode="popLayout">
+                    {critical.map((a) => (
+                      <AlertCard key={a.id} alert={a} onDismiss={handleDismiss} />
+                    ))}
+                  </AnimatePresence>
                 </div>
               </motion.section>
             )}
@@ -76,6 +112,7 @@ export default function AlertsPage() {
             {/* Low Stock */}
             {lowStock.length > 0 && (
               <motion.section
+                key="low_stock"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.06 }}
@@ -89,9 +126,11 @@ export default function AlertsPage() {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {lowStock.map((a) => (
-                    <AlertCard key={a.id} alert={a} />
-                  ))}
+                  <AnimatePresence mode="popLayout">
+                    {lowStock.map((a) => (
+                      <AlertCard key={a.id} alert={a} onDismiss={handleDismiss} />
+                    ))}
+                  </AnimatePresence>
                 </div>
               </motion.section>
             )}
@@ -99,6 +138,7 @@ export default function AlertsPage() {
             {/* Capacity */}
             {capacityAlerts.length > 0 && (
               <motion.section
+                key="capacity"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.12 }}
@@ -112,13 +152,15 @@ export default function AlertsPage() {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {capacityAlerts.map((a) => (
-                    <AlertCard key={a.id} alert={a} />
-                  ))}
+                  <AnimatePresence mode="popLayout">
+                    {capacityAlerts.map((a) => (
+                      <AlertCard key={a.id} alert={a} onDismiss={handleDismiss} />
+                    ))}
+                  </AnimatePresence>
                 </div>
               </motion.section>
             )}
-          </>
+          </AnimatePresence>
         )}
       </div>
     </div>

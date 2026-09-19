@@ -1,4 +1,4 @@
-import type { Product, StockStatus, CapacityInfo } from '@/types';
+import type { Product, StockStatus, CapacityInfo, ExpiryStatus } from '@/types';
 
 // ─── Stock Status ─────────────────────────────────────────────────────────────
 
@@ -143,4 +143,50 @@ export function getCategoryEmoji(category: string): string {
 
 export function cn(...classes: (string | undefined | false | null)[]): string {
   return classes.filter(Boolean).join(' ');
+}
+
+// ─── Expiry Utils ─────────────────────────────────────────────────────────────
+
+const EXPIRY_SOON_DAYS = 3; // Mirror backend config default
+
+export function daysUntilExpiry(expiryDate: string): number {
+  const expiry = new Date(expiryDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  expiry.setHours(0, 0, 0, 0);
+  return Math.round((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+export function getExpiryStatus(expiryDate?: string | null): ExpiryStatus {
+  if (!expiryDate) return 'NO_EXPIRY';
+  const days = daysUntilExpiry(expiryDate);
+  if (days < 0) return 'EXPIRED';
+  if (days <= EXPIRY_SOON_DAYS) return 'EXPIRING_SOON';
+  return 'SAFE';
+}
+
+export function formatExpiryDate(isoDate: string): string {
+  return new Intl.DateTimeFormat('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(isoDate));
+}
+
+export function expiryStatusLabel(status: ExpiryStatus): string {
+  switch (status) {
+    case 'EXPIRED': return 'Expired';
+    case 'EXPIRING_SOON': return 'Expiring Soon';
+    case 'SAFE': return 'Safe';
+    case 'NO_EXPIRY': return 'Not tracked';
+  }
+}
+
+export function expiryStatusColor(status: ExpiryStatus): string {
+  switch (status) {
+    case 'EXPIRED': return 'text-red-700 bg-red-100 border-red-200';
+    case 'EXPIRING_SOON': return 'text-amber-700 bg-amber-100 border-amber-200';
+    case 'SAFE': return 'text-green-700 bg-green-100 border-green-200';
+    case 'NO_EXPIRY': return 'text-gray-500 bg-gray-100 border-gray-200';
+  }
 }

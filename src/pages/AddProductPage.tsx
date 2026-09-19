@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Save, X } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
-import { getProductById, createProduct } from '@/services/api';
+import { getProductById, createProduct, updateProduct } from '@/services/api';
 import type { Category, Unit } from '@/types';
 
 const CATEGORIES: Category[] = [
@@ -27,6 +27,8 @@ interface FormData {
   sellingPrice: string;
   reorderLevel: string;
   capacity: string;
+  expiryTracked: boolean;
+  expiryDate: string;
 }
 
 const DEFAULT_FORM: FormData = {
@@ -39,6 +41,8 @@ const DEFAULT_FORM: FormData = {
   sellingPrice: '',
   reorderLevel: '',
   capacity: '',
+  expiryTracked: false,
+  expiryDate: '',
 };
 
 export default function AddProductPage() {
@@ -66,6 +70,8 @@ export default function AddProductPage() {
             sellingPrice: String(p.sellingPrice),
             reorderLevel: String(p.reorderLevel),
             capacity: p.capacity ? String(p.capacity) : '',
+            expiryTracked: p.expiryTracked ?? false,
+            expiryDate: p.expiryDate ?? '',
           });
         }
       });
@@ -96,7 +102,7 @@ export default function AddProductPage() {
     }
     setSaving(true);
     try {
-      await createProduct({
+      const payload = {
         name: form.name.trim(),
         brand: form.brand.trim() || undefined,
         category: form.category,
@@ -107,7 +113,30 @@ export default function AddProductPage() {
         sellingPrice: Number(form.sellingPrice),
         reorderLevel: Number(form.reorderLevel),
         capacity: form.capacity ? Number(form.capacity) : undefined,
-      });
+      };
+
+      if (isEdit && editId) {
+        // Edit: update existing product (do NOT reset stock via openingStock)
+        await updateProduct(editId, {
+          name: payload.name,
+          brand: payload.brand,
+          category: payload.category,
+          unit: payload.unit,
+          purchasePrice: payload.purchasePrice,
+          sellingPrice: payload.sellingPrice,
+          reorderLevel: payload.reorderLevel,
+          capacity: payload.capacity,
+          expiryTracked: form.expiryTracked,
+          expiryDate: form.expiryTracked && form.expiryDate ? form.expiryDate : undefined,
+        });
+      } else {
+        // Create: new product
+        await createProduct({
+          ...payload,
+          expiryTracked: form.expiryTracked,
+          expiryDate: form.expiryTracked && form.expiryDate ? form.expiryDate : undefined,
+        });
+      }
       setSaved(true);
       setTimeout(() => navigate('/stock'), 1200);
     } catch {
@@ -201,6 +230,37 @@ export default function AddProductPage() {
                     placeholder="Max storage" value={form.capacity} onChange={(e) => set('capacity', e.target.value)} />
                   <p className="text-xs text-[--color-text-secondary] mt-1">Leave blank if unlimited</p>
                 </div>
+              </div>
+
+              {/* Expiry tracking */}
+              <div className="border border-[--color-border] rounded-xl p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="p-expiry-tracked"
+                    type="checkbox"
+                    checked={form.expiryTracked}
+                    onChange={(e) => setForm((f) => ({ ...f, expiryTracked: e.target.checked }))}
+                    className="w-4 h-4 accent-orange-500"
+                  />
+                  <label htmlFor="p-expiry-tracked" className="text-sm font-medium text-[--color-text] cursor-pointer">
+                    Track expiry date
+                  </label>
+                </div>
+                {form.expiryTracked && (
+                  <div>
+                    <label htmlFor="p-expiry-date" className="label">Expiry Date</label>
+                    <input
+                      id="p-expiry-date"
+                      type="date"
+                      className="input"
+                      value={form.expiryDate}
+                      onChange={(e) => set('expiryDate', e.target.value)}
+                    />
+                    <p className="text-xs text-[--color-text-secondary] mt-1">
+                      💡 Recommended for dairy, snacks, beverages
+                    </p>
+                  </div>
+                )}
               </div>
             </section>
 

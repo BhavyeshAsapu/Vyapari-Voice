@@ -41,6 +41,9 @@ export interface Product {
   sellingPrice: number;
   createdAt: string;
   updatedAt: string;
+  // Expiry tracking — optional
+  expiryDate?: string;       // ISO date "YYYY-MM-DD"
+  expiryTracked?: boolean;
 }
 
 export interface InventoryItem extends Product {
@@ -67,7 +70,9 @@ export interface Transaction {
 // Alert Types
 
 export type AlertSeverity = 'critical' | 'warning' | 'info';
-export type AlertType = 'out_of_stock' | 'low_stock' | 'over_capacity' | 'near_capacity';
+export type AlertType = 'out_of_stock' | 'low_stock' | 'over_capacity' | 'near_capacity' | 'expiring_soon' | 'expired';
+
+export type ExpiryStatus = 'EXPIRED' | 'EXPIRING_SOON' | 'SAFE' | 'NO_EXPIRY';
 
 export interface Alert {
   id: string;
@@ -80,7 +85,10 @@ export interface Alert {
   threshold?: number;
   capacity?: number;
   unit: Unit;
-  timestamp: string;
+  timestamp?: string;
+  // Expiry-specific
+  expiryDate?: string;
+  daysUntilExpiry?: number;
 }
 
 // Voice State Types
@@ -117,6 +125,10 @@ export type IntentType =
   | 'TRANSACTION_HISTORY_QUERY'
   | 'FAST_SELLING_QUERY'
   | 'UNDO_LAST_TRANSACTION'
+  | 'DAILY_SUMMARY_QUERY'
+  | 'EXPIRY_QUERY'
+  | 'EXPIRING_SOON_QUERY'
+  | 'EXPIRED_QUERY'
   | 'UNKNOWN';
 
 export type ProductMatchStatus = 'MATCHED' | 'AMBIGUOUS' | 'NOT_FOUND';
@@ -238,4 +250,28 @@ export interface CapacityInfo {
   capacity: number;
   percentage: number;
   status: StockStatus;
+}
+
+// Daily Inventory Summary (per-product, date-selectable)
+
+export interface DailyProductSummary {
+  productId: string;
+  productName: string;
+  unit: string;
+  openingStock: number;
+  stockIn: number;
+  stockOut: number;
+  closingStock: number;
+  hadActivity: boolean;
+}
+
+export interface DailyInventorySummary {
+  date: string;
+  products: DailyProductSummary[];
+  totals: {
+    stockInTransactions: number;
+    stockOutTransactions: number;
+    netChange: number;
+    productsWithActivity: number;
+  };
 }

@@ -1,10 +1,11 @@
 import { motion } from 'framer-motion';
-import { AlertTriangle, PackageX, Archive, ChevronRight } from 'lucide-react';
+import { AlertTriangle, PackageX, Archive, ChevronRight, X } from 'lucide-react';
 import type { Alert } from '@/types';
 import { useNavigate } from 'react-router-dom';
 
 interface AlertCardProps {
   alert: Alert;
+  onDismiss?: (alertId: string) => void;
 }
 
 function alertConfig(type: Alert['type']) {
@@ -48,7 +49,7 @@ function alertConfig(type: Alert['type']) {
   }
 }
 
-export default function AlertCard({ alert }: AlertCardProps) {
+export default function AlertCard({ alert, onDismiss }: AlertCardProps) {
   const navigate = useNavigate();
   const config = alertConfig(alert.type);
   const Icon = config.icon;
@@ -57,6 +58,7 @@ export default function AlertCard({ alert }: AlertCardProps) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96 }}
       className={`card border ${config.border} ${config.bg} p-4`}
     >
       <div className="flex items-start gap-3">
@@ -78,6 +80,18 @@ export default function AlertCard({ alert }: AlertCardProps) {
               `${alert.currentStock} / ${alert.capacity} ${alert.unit}`}
           </p>
         </div>
+
+        {/* Clear button */}
+        {onDismiss && (
+          <button
+            onClick={() => onDismiss(alert.id)}
+            className="flex-shrink-0 w-7 h-7 rounded-full bg-white/80 border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors"
+            aria-label={`Clear alert for ${alert.productName}`}
+            title="Clear alert"
+          >
+            <X size={13} className="text-gray-500" />
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-2 mt-3">

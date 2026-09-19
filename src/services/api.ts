@@ -3,9 +3,6 @@
  *
  * In development: hits http://localhost:8000/api
  * In production:  hits the Render backend URL (set VITE_API_URL)
- *
- * Function signatures are identical to the Milestone 1 mock layer,
- * so no page components needed to change.
  */
 
 import type {
@@ -13,6 +10,7 @@ import type {
   Transaction,
   Alert,
   DailySummary,
+  DailyInventorySummary,
   AssistantMessage,
   FastSellingItem,
   VoiceParseResponse,
@@ -34,7 +32,11 @@ async function apiFetch<T>(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail?.detail ?? `API error ${res.status}`);
+    throw new Error(
+      typeof detail?.detail === 'string'
+        ? detail.detail
+        : detail?.detail?.message ?? `API error ${res.status}`,
+    );
   }
   return res.json() as Promise<T>;
 }
@@ -76,6 +78,10 @@ export async function updateProduct(
   }
 }
 
+export async function deleteProduct(id: string): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/products/${id}`, { method: 'DELETE' });
+}
+
 // ── Inventory ───────────────────────────────────────────────────────────────
 
 export async function getInventory() {
@@ -84,6 +90,37 @@ export async function getInventory() {
 
 export async function getAlerts(): Promise<Alert[]> {
   return apiFetch<Alert[]>('/api/inventory/alerts');
+}
+
+export async function dismissAlert(alertId: string): Promise<void> {
+  await apiFetch('/api/inventory/alerts/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ alertId }),
+  });
+}
+
+export async function addStock(
+  productId: string,
+  quantity: number,
+  unit?: string,
+  note?: string,
+): Promise<{ success: boolean; newStock: number; transactionId: string; message: string }> {
+  return apiFetch(`/api/inventory/${productId}/add-stock`, {
+    method: 'POST',
+    body: JSON.stringify({ quantity, unit, note }),
+  });
+}
+
+export async function removeStock(
+  productId: string,
+  quantity: number,
+  unit?: string,
+  note?: string,
+): Promise<{ success: boolean; newStock: number; transactionId: string; message: string }> {
+  return apiFetch(`/api/inventory/${productId}/remove-stock`, {
+    method: 'POST',
+    body: JSON.stringify({ quantity, unit, note }),
+  });
 }
 
 // ── Transactions ────────────────────────────────────────────────────────────
@@ -150,8 +187,33 @@ export async function getDailySummary(): Promise<DailySummary> {
   return apiFetch<DailySummary>('/api/dashboard/summary');
 }
 
+export async function getDailyInventorySummary(date?: string): Promise<DailyInventorySummary> {
+  const params = date ? `?date=${date}` : '';
+  return apiFetch<DailyInventorySummary>(`/api/dashboard/daily-summary${params}`);
+}
+
 export async function getFastSelling(
   period: 'today' | '7days' | '30days',
 ): Promise<FastSellingItem[]> {
   return apiFetch<FastSellingItem[]>(`/api/dashboard/fast-selling?period=${period}`);
+}
+
+// ── Profile ─────────────────────────────────────────────────────────────────
+
+export interface ProfileData {
+  ownerName: string;
+  shopName: string;
+  phone: string;
+  language: string;
+}
+
+export async function getProfile(): Promise<ProfileData> {
+  return apiFetch<ProfileData>('/api/profile');
+}
+
+export async function updateProfile(data: Partial<ProfileData>): Promise<ProfileData> {
+  return apiFetch<ProfileData>('/api/profile', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
 }

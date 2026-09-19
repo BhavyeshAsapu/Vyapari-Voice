@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from db.mongo import connect_db, close_db
 from db.seed import seed_database
-from routers import products, inventory, transactions, voice, assistant, dashboard
+from routers import products, inventory, transactions, voice, assistant, dashboard, profile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,6 +69,7 @@ app.include_router(transactions.router)
 app.include_router(voice.router)
 app.include_router(assistant.router)
 app.include_router(dashboard.router)
+app.include_router(profile.router)
 
 
 @app.get("/")

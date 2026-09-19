@@ -22,6 +22,11 @@ IntentType = Literal[
     "TRANSACTION_HISTORY_QUERY",
     "FAST_SELLING_QUERY",
     "UNDO_LAST_TRANSACTION",
+    # New intents — Daily Summary & Expiry
+    "DAILY_SUMMARY_QUERY",
+    "EXPIRY_QUERY",
+    "EXPIRING_SOON_QUERY",
+    "EXPIRED_QUERY",
     "UNKNOWN",
 ]
 
@@ -52,6 +57,8 @@ class InventoryIntent(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     needsClarification: bool = False
     clarificationQuestion: Optional[str] = None
+    # Expiry — extracted from natural language when present
+    expiryDate: Optional[str] = None    # ISO "YYYY-MM-DD"; backend must store as-is
 
     @field_validator("confidence")
     @classmethod
@@ -82,6 +89,7 @@ class ProposedAction(BaseModel):
     resultQuantity: Optional[float] = None
     unit: Optional[str] = None
     price: Optional[float] = None
+    expiryDate: Optional[str] = None     # Passed through to transaction
     # For CREATE_PRODUCT
     proposedProduct: Optional[dict] = None
 

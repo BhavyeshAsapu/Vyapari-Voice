@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from db.mongo import get_db
 from models.product import ProductCreate, ProductUpdate, ProductResponse, doc_to_product
@@ -7,6 +8,12 @@ from datetime import datetime, timezone
 import uuid
 
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+
+class ArchiveResponse(BaseModel):
+    success: bool
+    message: str
+    productId: str
 
 
 def get_inventory_service(db: AsyncIOMotorDatabase = Depends(get_db)) -> InventoryService:
@@ -46,11 +53,28 @@ async def update_product(
     return updated
 
 
-@router.delete("/{product_id}", status_code=204)
-async def delete_product(
+@router.delete("/{product_id}", response_model=ArchiveResponse)
+async def archive_product(
     product_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    result = await db.products.delete_one({"_id": product_id})
-    if result.deleted_count == 0:
+    """
+    Soft-delete (archive) a product.
+    Sets status=archived so it no longer appears in active inventory.
+    Transaction history is fully preserved.
+    """
+    doc = await db.products.find_one({"_id": product_id})
+    if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
+    if doc.get("status") == "archived":
+        raise HTTPException(status_code=409, detail="Product is already archived")
+
+    await db.products.update_one(
+        {"_id": product_id},
+        {"$set": {"status": "archived", "updatedAt": datetime.now(timezone.utc).isoformat()}},
+    )
+    return ArchiveResponse(
+        success=True,
+        message=f"{doc['name']} removed from active inventory.",
+        productId=product_id,
+    )
