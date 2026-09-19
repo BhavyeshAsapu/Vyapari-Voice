@@ -11,7 +11,7 @@ Design principles:
 import json
 import logging
 from typing import Optional
-import google.generativeai as genai
+from google import genai
 from models.voice import InventoryIntent
 from config import settings
 
@@ -82,14 +82,11 @@ class AIInventoryInterpreter:
     def __init__(self):
         if not settings.gemini_api_key:
             logger.warning("⚠️  GEMINI_API_KEY not set. AI features will not work until it is configured in backend/.env")
-            self._model = None
+            self._client = None
             return
 
         # Configure Gemini with the sanitized key from settings
-        genai.configure(api_key=settings.gemini_api_key)
-        self._model = genai.GenerativeModel(
-            model_name=settings.gemini_model,
-        )
+        self._client = genai.Client(api_key=settings.gemini_api_key)
         logger.info(f"✅ AIInventoryInterpreter initialized with model: {settings.gemini_model}")
 
     def _build_system_prompt(self) -> str:
@@ -105,7 +102,7 @@ class AIInventoryInterpreter:
 
 
     def _require_model(self):
-        if self._model is None:
+        if self._client is None:
             raise RuntimeError(
                 "AI service unavailable: GEMINI_API_KEY is not configured. "
                 "Set it in backend/.env and restart the server."
@@ -148,14 +145,14 @@ class AIInventoryInterpreter:
         prompt = "\n".join(prompt_parts)
 
         try:
-            response = await self._model.generate_content_async(
-                [{"role": "user", "parts": [prompt]}],
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(
                     response_mime_type="application/json",
                     temperature=0.1,
-                    max_output_tokens=512,
+                    system_instruction=self._build_system_prompt(),
                 ),
-                system_instruction=self._build_system_prompt(),
             )
             raw_text = response.text.strip()
             logger.debug(f"AI raw output: {raw_text}")
@@ -213,9 +210,10 @@ Examples:
 - OUT_OF_STOCK_QUERY: List what's out of stock.
 """
         try:
-            response = await self._model.generate_content_async(
-                prompt,
-                generation_config=genai.GenerationConfig(
+            response = await self._client.aio.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(
                     temperature=0.3,
                     max_output_tokens=200,
                 ),

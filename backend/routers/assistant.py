@@ -10,21 +10,21 @@ from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from db.mongo import get_db
 from services.inventory import InventoryService
-import google.generativeai as genai
+from google import genai
 from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
 # Lazy singleton — initialized on first use, not at import time
-_model: genai.GenerativeModel | None = None
+_client: genai.Client | None = None
 
 
-def _get_model() -> genai.GenerativeModel:
-    """Return or create the Gemini model. Raises HTTPException if key is not set."""
-    global _model
-    if _model is not None:
-        return _model
+def _get_client() -> genai.Client:
+    """Return or create the Gemini client. Raises HTTPException if key is not set."""
+    global _client
+    if _client is not None:
+        return _client
     if not settings.gemini_api_key:
         raise HTTPException(
             status_code=503,
@@ -33,20 +33,9 @@ def _get_model() -> genai.GenerativeModel:
                 "message": "AI service authentication failed. Check the Gemini API key configuration.",
             },
         )
-    genai.configure(api_key=settings.gemini_api_key)
-    _model = genai.GenerativeModel(
-        model_name=settings.gemini_model,
-        system_instruction="""
-You are Vyapari Voice — an AI assistant for an Indian kirana shop owner.
-Answer questions about their inventory based ONLY on the data provided.
-Keep responses SHORT (2-4 sentences max) and conversational.
-Use simple mixed language if the user writes in Telugu or Hindi mixed with English.
-Never invent product quantities, prices, or product names not in the data.
-If data is empty for a category, say so honestly.
-""",
-    )
+    _client = genai.Client(api_key=settings.gemini_api_key)
     logger.info(f"✅ Assistant model initialized: {settings.gemini_model}")
-    return _model
+    return _client
 
 
 class AssistantQueryRequest(BaseModel):
@@ -79,11 +68,11 @@ async def assistant_health():
 
     try:
         # Quick ping: generate a one-token response
-        genai.configure(api_key=settings.gemini_api_key)
-        test_model = genai.GenerativeModel(model_name=settings.gemini_model)
-        response = await test_model.generate_content_async(
-            "Reply with exactly: OK",
-            generation_config=genai.GenerationConfig(max_output_tokens=4, temperature=0),
+        client = genai.Client(api_key=settings.gemini_api_key)
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model,
+            contents="Reply with exactly: OK",
+            config=genai.types.GenerateContentConfig(max_output_tokens=4, temperature=0),
         )
         _ = response.text  # Access to trigger any auth errors
         return {
@@ -108,7 +97,7 @@ async def query_assistant(
     req: AssistantQueryRequest,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    model = _get_model()
+    client = _get_client()
     svc = InventoryService(db)
 
     # Gather live inventory context
@@ -159,11 +148,24 @@ IMPORTANT: Never invent quantities, expiry dates, or product names not in the da
     history = []
     for msg in req.history[-6:]:  # Last 3 turns for context
         role = "user" if msg.get("role") == "user" else "model"
-        history.append({"role": role, "parts": [msg.get("content", "")]})
+        history.append({"role": role, "parts": [{"text": msg.get("content", "")}]})
+        
+    system_instruction = """
+You are Vyapari Voice — an AI assistant for an Indian kirana shop owner.
+Answer questions about their inventory based ONLY on the data provided.
+Keep responses SHORT (2-4 sentences max) and conversational.
+Use simple mixed language if the user writes in Telugu or Hindi mixed with English.
+Never invent product quantities, prices, or product names not in the data.
+If data is empty for a category, say so honestly.
+"""
 
     try:
-        chat = model.start_chat(history=history)
-        response = await chat.send_message_async(context_prompt)
+        chat = client.aio.chats.create(
+            model=settings.gemini_model,
+            config=genai.types.GenerateContentConfig(system_instruction=system_instruction),
+            history=history
+        )
+        response = await chat.send_message(context_prompt)
         answer = response.text.strip()
     except Exception as e:
         err_str = str(e)
