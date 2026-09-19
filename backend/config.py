@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""  # Required for AI features; validated when used, not at startup
-    gemini_model: str = "gemini-1.5-flash"  # Configurable via GEMINI_MODEL env var
+    gemini_model: str = "gemini-3.5-flash"  # Configurable via GEMINI_MODEL env var
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "vyapari_voice"
     frontend_url: str = "http://localhost:5173"
