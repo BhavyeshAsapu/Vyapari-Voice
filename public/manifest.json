@@ -1,0 +1,16 @@
+{
+  "name": "Vyapari Voice",
+  "short_name": "Vyapari",
+  "description": "Speak Naturally. Manage Your Shop Easily.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFAF8",
+  "theme_color": "#F97316",
+  "icons": [
+    {
+      "src": "/vv-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
